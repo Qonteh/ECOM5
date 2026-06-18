@@ -4,7 +4,13 @@
 // every value returned is derived from the actual image content.
 import { NextRequest, NextResponse } from "next/server";
 import { generateText, Output } from "ai";
+import { createOpenAI } from "@ai-sdk/openai";
 import * as z from "zod";
+
+// Use the real OpenAI API directly with your OPENAI_API_KEY (no AI Gateway).
+const openai = createOpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
 // Keep enums aligned with how the form + database expect values.
 const analysisSchema = z.object({
@@ -86,8 +92,15 @@ export async function POST(request: NextRequest) {
             .join("\n")
         : "No category list provided; infer a reasonable lowercase slug.";
 
+    if (!process.env.OPENAI_API_KEY) {
+      return NextResponse.json(
+        { error: "OPENAI_API_KEY is not configured on the server." },
+        { status: 500 },
+      );
+    }
+
     const { output } = await generateText({
-      model: "openai/gpt-5.4-mini",
+      model: openai("gpt-4o-mini"),
       output: Output.object({ schema: analysisSchema }),
       system:
         "You are a product cataloguing assistant for a Tanzanian online marketplace. " +
