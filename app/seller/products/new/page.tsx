@@ -18,6 +18,7 @@ import {
   FileText,
   Tag,
   ShieldCheck,
+  Pencil,
 } from "lucide-react";
 import Link from "next/link";
 import {
@@ -319,6 +320,12 @@ export default function NewProductPage() {
   const [activeTab, setActiveTab] = useState("basic");
   const [dbCategories, setDbCategories] = useState<any[]>([]);
 
+  // Smart upload state
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analyzed, setAnalyzed] = useState(false);
+  const [nameHint, setNameHint] = useState("");
+  const [showFullForm, setShowFullForm] = useState(false);
+
   useEffect(() => {
     async function loadCategories() {
       try {
@@ -472,6 +479,97 @@ export default function NewProductPage() {
     setImages(images.filter((_, i) => i !== index));
   };
 
+  // Smart upload: read the image, then ask the AI to auto-fill every field.
+  const handleSmartUpload = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const readAsDataURL = (file: File): Promise<string> =>
+      new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+    setIsAnalyzing(true);
+    try {
+      const base64Images = await Promise.all(
+        Array.from(files).slice(0, 10).map(readAsDataURL),
+      );
+      setImages((prev) => [...prev, ...base64Images].slice(0, 10));
+
+      // Analyze the first (main) image to derive all listing details.
+      const res = await fetch("/api/products/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          image: base64Images[0],
+          nameHint: nameHint || undefined,
+          categories: categoriesToUse.map((c: any) => ({
+            name: c.name,
+            slug: c.slug,
+            subcategories: c.subcategories?.map((s: any) => ({
+              name: s.name,
+              slug: s.slug,
+            })),
+          })),
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Analysis failed");
+      }
+
+      const { analysis } = await res.json();
+
+      // Resolve the AI category slug to the real category id used by the form.
+      const matchedCategory = categoriesToUse.find(
+        (c: any) => c.slug === analysis.categorySlug,
+      );
+      const matchedSubcategory = matchedCategory?.subcategories?.find(
+        (s: any) => s.slug === analysis.subcategorySlug,
+      );
+
+      setFormData((prev) => ({
+        ...prev,
+        title: analysis.title || nameHint || prev.title,
+        description: analysis.description || prev.description,
+        categoryId: matchedCategory?.id || prev.categoryId,
+        subcategoryId: matchedSubcategory?.id || "",
+        condition: analysis.condition || prev.condition,
+        price:
+          analysis.suggestedPrice != null
+            ? String(Math.round(analysis.suggestedPrice))
+            : prev.price,
+        brand: analysis.brand || "",
+        model: analysis.model || "",
+        color: analysis.color || "",
+        material: analysis.material || "",
+        size: analysis.size || "",
+        countryOfOrigin: analysis.countryOfOrigin || "",
+        tags:
+          Array.isArray(analysis.tags) && analysis.tags.length > 0
+            ? analysis.tags
+            : prev.tags,
+      }));
+
+      setAnalyzed(true);
+      toast.success("Details detected and filled automatically!");
+    } catch (error: any) {
+      toast.error(
+        error.message || "Could not analyze image. Please try another photo.",
+      );
+    } finally {
+      setIsAnalyzing(false);
+      // Reset the input so the same file can be re-selected if needed.
+      e.target.value = "";
+    }
+  };
+
   const addTag = () => {
     if (tagInput.trim() && !formData.tags.includes(tagInput.trim())) {
       setFormData({ ...formData, tags: [...formData.tags, tagInput.trim()] });
@@ -609,10 +707,178 @@ export default function NewProductPage() {
       </div>
 
       <form onSubmit={handleSubmit}>
+        {/* Smart Upload — the only visible step for the seller. */}
+        <div className="space-y-6 mb-6">
+          <Card className="border-primary/40">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <ImageIcon className="w-5 h-5 text-primary" />
+                Smart Upload
+              </CardTitle>
+              <CardDescription>
+                Just upload a clear photo of your product. We&apos;ll detect the
+                title, category, condition, price and the rest automatically.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="space-y-2">
+                <Label htmlFor="nameHint">Product name (optional)</Label>
+                <Input
+                  id="nameHint"
+                  placeholder="e.g. iPhone 13 Pro"
+                  value={nameHint}
+                  onChange={(e) => setNameHint(e.target.value)}
+                  disabled={isAnalyzing}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Adding a name helps us detect details more accurately.
+                </p>
+              </div>
+
+              <label
+                className={`relative flex flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed border-border p-10 text-center transition-colors ${
+                  isAnalyzing
+                    ? "opacity-60 pointer-events-none"
+                    : "cursor-pointer hover:border-primary hover:bg-primary/5"
+                }`}
+              >
+                {isAnalyzing ? (
+                  <>
+                    <Loader2 className="w-8 h-8 text-primary animate-spin" />
+                    <span className="font-medium">Analyzing your photo…</span>
+                    <span className="text-sm text-muted-foreground">
+                      Detecting product details automatically
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-8 h-8 text-muted-foreground" />
+                    <span className="font-medium">
+                      Click to upload product photo
+                    </span>
+                    <span className="text-sm text-muted-foreground">
+                      JPG or PNG, up to 10 images
+                    </span>
+                  </>
+                )}
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={handleSmartUpload}
+                  disabled={isAnalyzing}
+                />
+              </label>
+
+              {images.length > 0 && (
+                <div className="grid grid-cols-5 gap-3">
+                  {images.map((image, index) => (
+                    <div
+                      key={index}
+                      className="relative aspect-square overflow-hidden rounded-lg border-2 border-border bg-muted"
+                    >
+                      <img
+                        src={image || "/placeholder.svg"}
+                        alt={`Product photo ${index + 1}`}
+                        className="h-full w-full object-cover"
+                      />
+                      {index === 0 && (
+                        <span className="absolute left-1 top-1 rounded bg-primary px-1.5 py-0.5 text-[10px] text-primary-foreground">
+                          Main
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => removeImage(index)}
+                        className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-destructive-foreground"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Read-only confirmation of what was auto-detected. */}
+          {analyzed && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <ShieldCheck className="w-5 h-5 text-primary" />
+                  Detected Details
+                </CardTitle>
+                <CardDescription>
+                  Auto-filled from your photo. Publish when ready.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm">
+                <div>
+                  <p className="font-medium">{formData.title}</p>
+                  <p className="text-muted-foreground">
+                    {formData.description}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {selectedCategory && (
+                    <Badge variant="secondary">{selectedCategory.name}</Badge>
+                  )}
+                  <Badge variant="secondary">
+                    {conditions.find((c) => c.value === formData.condition)
+                      ?.label || formData.condition}
+                  </Badge>
+                  {formData.brand && (
+                    <Badge variant="secondary">{formData.brand}</Badge>
+                  )}
+                  {formData.color && (
+                    <Badge variant="secondary">{formData.color}</Badge>
+                  )}
+                </div>
+                <p className="font-semibold">
+                  Suggested price: TZS{" "}
+                  {Number(formData.price || 0).toLocaleString()}
+                </p>
+                {formData.tags.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {formData.tags.map((tag) => (
+                      <Badge key={tag} variant="outline" className="text-xs">
+                        {tag}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+                <div className="pt-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowFullForm((v) => !v)}
+                    className="gap-2"
+                  >
+                    <Pencil className="w-4 h-4" />
+                    {showFullForm ? "Hide details" : "Edit details"}
+                  </Button>
+                  {!showFullForm && (
+                    <p className="text-xs text-muted-foreground mt-2">
+                      Everything looks right? Just publish. Want to change
+                      something? Tap Edit details.
+                    </p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+
+        {/* Full listing form — hidden by default (auto-filled by Smart Upload),
+            revealed for editing when the seller taps "Edit details". */}
         <Tabs
           value={activeTab}
           onValueChange={setActiveTab}
-          className="space-y-6"
+          className={showFullForm ? "space-y-6" : "space-y-6 hidden"}
+          aria-hidden={!showFullForm}
         >
           <TabsList className="grid grid-cols-2 lg:grid-cols-6 w-full">
             <TabsTrigger value="basic" className="gap-2">
@@ -2200,7 +2466,11 @@ export default function NewProductPage() {
                   Cancel
                 </Button>
               </Link>
-              <Button type="submit" disabled={isLoading} className="min-w-32">
+              <Button
+                type="submit"
+                disabled={isLoading || isAnalyzing || !analyzed}
+                className="min-w-32"
+              >
                 {isLoading ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
