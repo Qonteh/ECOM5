@@ -18,6 +18,7 @@ import {
   FileText,
   Tag,
   ShieldCheck,
+  Sparkles,
 } from "lucide-react";
 import Link from "next/link";
 import {
@@ -318,6 +319,7 @@ export default function NewProductPage() {
   const [images, setImages] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState("basic");
   const [dbCategories, setDbCategories] = useState<any[]>([]);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   useEffect(() => {
     async function loadCategories() {
@@ -470,6 +472,83 @@ export default function NewProductPage() {
 
   const removeImage = (index: number) => {
     setImages(images.filter((_, i) => i !== index));
+  };
+
+  // Smart Upload: analyze the first image with AI and auto-fill the whole form
+  const handleSmartFill = async () => {
+    if (images.length === 0) {
+      toast.error("Please upload at least one product image first");
+      return;
+    }
+
+    setIsAnalyzing(true);
+    const toastId = toast.loading("Analyzing your product image with AI...");
+
+    try {
+      const res = await fetch("/api/products/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          image: images[0],
+          name: formData.title || undefined,
+          categories: categoriesToUse.map((c) => c.name),
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Failed to analyze image");
+      }
+
+      const { data } = await res.json();
+      if (!data) throw new Error("No details were detected");
+
+      // Match the AI's category name back to a real category id from your DB
+      let matchedCategoryId = formData.categoryId;
+      if (data.category) {
+        const match = categoriesToUse.find(
+          (c) =>
+            c.name?.toLowerCase().trim() ===
+            String(data.category).toLowerCase().trim(),
+        );
+        if (match) matchedCategoryId = match.id;
+      }
+
+      // Merge AI results into the form, only overwriting empty fields where it makes sense
+      setFormData((prev) => ({
+        ...prev,
+        title: data.title || prev.title,
+        description: data.description || prev.description,
+        categoryId: matchedCategoryId,
+        subcategoryId: matchedCategoryId !== prev.categoryId ? "" : prev.subcategoryId,
+        condition: data.condition || prev.condition,
+        price:
+          prev.price ||
+          (data.suggestedPrice ? String(Math.round(data.suggestedPrice)) : ""),
+        brand: data.brand || prev.brand,
+        model: data.model || prev.model,
+        color: data.color || prev.color,
+        size: data.size || prev.size,
+        material: data.material || prev.material,
+        countryOfOrigin: data.countryOfOrigin || prev.countryOfOrigin,
+        tags:
+          Array.isArray(data.tags) && data.tags.length > 0
+            ? Array.from(new Set([...prev.tags, ...data.tags]))
+            : prev.tags,
+        metaTitle: data.metaTitle || prev.metaTitle,
+        metaDescription: data.metaDescription || prev.metaDescription,
+      }));
+
+      toast.success("Details filled automatically! Review and adjust as needed.", {
+        id: toastId,
+      });
+    } catch (error: any) {
+      toast.error(error.message || "Could not analyze the image", {
+        id: toastId,
+      });
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   const addTag = () => {
@@ -698,6 +777,43 @@ export default function NewProductPage() {
                   Tip: Use clear, well-lit photos from multiple angles. Include
                   photos of any defects or wear.
                 </p>
+
+                {/* Smart Upload: AI auto-fill */}
+                <div className="mt-4 rounded-lg border border-primary/30 bg-primary/5 p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                        <Sparkles className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <p className="font-medium">Smart Auto-Fill</p>
+                        <p className="text-sm text-muted-foreground">
+                          Upload a photo and let AI detect the title,
+                          description, category, condition, price and more — no
+                          long typing needed.
+                        </p>
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      onClick={handleSmartFill}
+                      disabled={isAnalyzing || images.length === 0}
+                      className="gap-2 sm:w-auto"
+                    >
+                      {isAnalyzing ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Analyzing...
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="h-4 w-4" />
+                          Auto-Fill from Image
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </div>
               </CardContent>
             </Card>
 
