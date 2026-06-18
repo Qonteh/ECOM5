@@ -18,6 +18,8 @@ import {
   FileText,
   Tag,
   ShieldCheck,
+  Sparkles,
+  Pencil,
 } from "lucide-react";
 import Link from "next/link";
 import {
@@ -319,6 +321,13 @@ export default function NewProductPage() {
   const [activeTab, setActiveTab] = useState("basic");
   const [dbCategories, setDbCategories] = useState<any[]>([]);
 
+  // Smart (photo-only) listing mode — seller just uploads a photo and the AI
+  // fills in every detail automatically. Manual full form stays available.
+  const [smartMode, setSmartMode] = useState(true);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [smartStatus, setSmartStatus] = useState("");
+  const [productName, setProductName] = useState("");
+
   useEffect(() => {
     async function loadCategories() {
       try {
@@ -507,6 +516,127 @@ export default function NewProductPage() {
     }
   };
 
+  // Smart listing: analyze the uploaded photo with AI, auto-fill all fields,
+  // then publish to the SAME /api/products endpoint used by the manual form.
+  const handleSmartList = async () => {
+    if (!user) {
+      toast.error("You must be logged in to create a product.");
+      return;
+    }
+    if (images.length === 0) {
+      toast.error("Please upload at least one product photo first.");
+      return;
+    }
+
+    setAnalyzing(true);
+    try {
+      setSmartStatus("Analyzing your photo with AI...");
+      const res = await fetch("/api/products/analyze-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          image: images[0],
+          name: productName,
+          categories: dbCategories.map((c) => ({
+            name: c.name,
+            slug: c.slug,
+          })),
+        }),
+      });
+
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error(e.error || "Failed to analyze image");
+      }
+
+      const { product } = await res.json();
+
+      // Map AI category slug to a real category id from the database
+      const matchedCategory =
+        dbCategories.find((c) => c.slug === product.categorySlug) ||
+        dbCategories.find(
+          (c) =>
+            c.name?.toLowerCase() ===
+            String(product.categorySlug || "").toLowerCase(),
+        );
+      const categoryId = matchedCategory?.id || dbCategories[0]?.id;
+
+      const price =
+        Number(product.estimatedPriceTzs) > 0
+          ? Math.round(Number(product.estimatedPriceTzs))
+          : 1;
+
+      // Keep the manual form state in sync so the seller can review/edit later
+      setFormData((prev) => ({
+        ...prev,
+        title: product.title || prev.title,
+        description: product.description || prev.description,
+        price: String(price),
+        categoryId: categoryId || prev.categoryId,
+        condition:
+          product.condition === "new"
+            ? "brand_new"
+            : product.condition === "refurbished"
+              ? "good"
+              : "like_new",
+        brand: product.brand || "",
+        model: product.model || "",
+        color: product.color || "",
+        size: product.size || "",
+        material: product.material || "",
+        yearOfManufacture: product.yearOfManufacture || "",
+        countryOfOrigin: product.countryOfOrigin || "",
+        tags: Array.isArray(product.tags) ? product.tags : prev.tags,
+      }));
+
+      setSmartStatus("Publishing your listing...");
+
+      const response = await fetch("/api/products", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          seller_id: user.id,
+          category_id:
+            categoryId || "12345678-1234-1234-1234-123456789012",
+          title: product.title || productName || "Untitled Product",
+          description: product.description || "No description provided",
+          price,
+          condition: product.condition || "new",
+          region: formData.region || "Dar es Salaam",
+          district: formData.district || "Unknown",
+          ward: formData.ward || "",
+          street: formData.street || "",
+          images,
+          currency: "TZS",
+          quantity: 1,
+          features: Array.isArray(product.tags) ? product.tags : [],
+          attributes: {
+            brand: product.brand || "",
+            model: product.model || "",
+            color: product.color || "",
+            size: product.size || "",
+            material: product.material || "",
+            yearOfManufacture: product.yearOfManufacture || "",
+            countryOfOrigin: product.countryOfOrigin || "",
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to create product");
+      }
+
+      toast.success("Product listed successfully!");
+      router.push("/seller/products");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to list product. Please try again.");
+    } finally {
+      setAnalyzing(false);
+      setSmartStatus("");
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) {
@@ -603,12 +733,136 @@ export default function NewProductPage() {
             List your item for sale on the marketplace
           </p>
         </div>
+        {!smartMode && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setSmartMode(true)}
+            className="gap-2"
+          >
+            <Sparkles className="w-4 h-4" />
+            Smart Upload
+          </Button>
+        )}
         <Badge variant="outline" className="text-sm">
           Listing Fee: TZS {calculateListingFee().toLocaleString()}
         </Badge>
       </div>
 
       <form onSubmit={handleSubmit}>
+        {smartMode && (
+          <div className="space-y-6 pb-24">
+            <Card className="border-primary/30">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Sparkles className="w-5 h-5 text-primary" />
+                  Smart Listing
+                </CardTitle>
+                <CardDescription>
+                  Just upload a photo. Our AI reads the image and fills in the
+                  title, description, price, category and all other details for
+                  you automatically.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {/* Photo upload */}
+                <div className="grid grid-cols-3 sm:grid-cols-5 gap-4">
+                  {images.map((image, index) => (
+                    <div
+                      key={index}
+                      className="relative aspect-square bg-muted rounded-lg flex items-center justify-center border-2 border-border overflow-hidden"
+                    >
+                      <img
+                        src={image || "/placeholder.svg"}
+                        alt={`Upload ${index + 1}`}
+                        className="w-full h-full object-cover"
+                      />
+                      {index === 0 && (
+                        <span className="absolute top-2 left-2 px-2 py-0.5 bg-primary text-primary-foreground text-xs rounded">
+                          Main
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => removeImage(index)}
+                        className="absolute top-2 right-2 w-6 h-6 bg-destructive text-destructive-foreground rounded-full flex items-center justify-center"
+                        aria-label="Remove image"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                  {images.length < 10 && (
+                    <label className="aspect-square border-2 border-dashed border-border rounded-lg flex flex-col items-center justify-center gap-2 hover:border-primary hover:bg-primary/5 transition-colors cursor-pointer">
+                      <Upload className="w-6 h-6 text-muted-foreground" />
+                      <span className="text-xs text-muted-foreground text-center px-2">
+                        Upload Photo
+                      </span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        className="hidden"
+                        onChange={handleImageUpload}
+                        disabled={analyzing}
+                      />
+                    </label>
+                  )}
+                </div>
+
+                {/* Optional product name */}
+                <div className="space-y-2">
+                  <Label htmlFor="smart-name">
+                    Product name{" "}
+                    <span className="text-muted-foreground font-normal">
+                      (optional — helps the AI be more accurate)
+                    </span>
+                  </Label>
+                  <Input
+                    id="smart-name"
+                    placeholder="e.g. iPhone 13 Pro, Toyota Vitz, Nike Air Max..."
+                    value={productName}
+                    onChange={(e) => setProductName(e.target.value)}
+                    disabled={analyzing}
+                  />
+                </div>
+
+                <Button
+                  type="button"
+                  onClick={handleSmartList}
+                  disabled={analyzing || images.length === 0}
+                  className="w-full"
+                  size="lg"
+                >
+                  {analyzing ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      {smartStatus || "Working..."}
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4 mr-2" />
+                      Create Listing from Photo
+                    </>
+                  )}
+                </Button>
+
+                <button
+                  type="button"
+                  onClick={() => setSmartMode(false)}
+                  className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mx-auto"
+                >
+                  <Pencil className="w-4 h-4" />
+                  Prefer to fill everything in manually?
+                </button>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {!smartMode && (
+          <>
         <Tabs
           value={activeTab}
           onValueChange={setActiveTab}
@@ -2216,6 +2470,8 @@ export default function NewProductPage() {
             </div>
           </div>
         </div>
+          </>
+        )}
       </form>
     </div>
   );
