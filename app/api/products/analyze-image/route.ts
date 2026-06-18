@@ -1,9 +1,14 @@
 // Smart product image analyzer
-// Uses the Vercel AI Gateway (free credits, no GROQ_API_KEY needed) with the
-// fast, free Llama 4 Scout vision model to read a product photo and auto-fill
-// every product field the seller would otherwise type by hand.
+// Uses Groq (FAST + FREE) with the Llama 4 Scout vision model to read a product
+// photo and auto-fill every product field the seller would otherwise type by
+// hand. Requires GROQ_API_KEY in your environment (.env.local).
 import { generateText, Output } from "ai";
+import { createGroq } from "@ai-sdk/groq";
 import * as z from "zod";
+
+const groq = createGroq({
+  apiKey: process.env.GROQ_API_KEY,
+});
 
 export const maxDuration = 60;
 
@@ -53,6 +58,13 @@ export async function POST(req: Request) {
   try {
     const { image, name, categories } = await req.json();
 
+    if (!process.env.GROQ_API_KEY) {
+      return Response.json(
+        { error: "GROQ_API_KEY is not set. Add it to your .env.local file." },
+        { status: 500 },
+      );
+    }
+
     if (!image || typeof image !== "string") {
       return Response.json(
         { error: "An image is required" },
@@ -68,7 +80,7 @@ export async function POST(req: Request) {
       : "";
 
     const { output } = await generateText({
-      model: "meta/llama-4-scout",
+      model: groq("meta-llama/llama-4-scout-17b-16e-instruct"),
       output: Output.object({ schema: productSchema }),
       messages: [
         {
