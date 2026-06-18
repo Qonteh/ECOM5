@@ -327,6 +327,9 @@ export default function NewProductPage() {
   const [analyzing, setAnalyzing] = useState(false);
   const [smartStatus, setSmartStatus] = useState("");
   const [productName, setProductName] = useState("");
+  // Whether details have been extracted from the photo and are ready to review
+  const [extracted, setExtracted] = useState(false);
+  const [posting, setPosting] = useState(false);
 
   useEffect(() => {
     async function loadCategories() {
@@ -516,8 +519,8 @@ export default function NewProductPage() {
     }
   };
 
-  // Smart listing: analyze the uploaded photo with AI, auto-fill all fields,
-  // then publish to the SAME /api/products endpoint used by the manual form.
+  // Step 1 — Read the uploaded photo and auto-fill all the product fields.
+  // This does NOT publish; the seller reviews (and can edit) before posting.
   const handleSmartList = async () => {
     if (!user) {
       toast.error("You must be logged in to create a product.");
@@ -530,7 +533,7 @@ export default function NewProductPage() {
 
     setAnalyzing(true);
     try {
-      setSmartStatus("Analyzing your photo with AI...");
+      setSmartStatus("Reading your photo...");
       const res = await fetch("/api/products/analyze-image", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -546,12 +549,12 @@ export default function NewProductPage() {
 
       if (!res.ok) {
         const e = await res.json().catch(() => ({}));
-        throw new Error(e.error || "Failed to analyze image");
+        throw new Error(e.error || "Failed to read image");
       }
 
       const { product } = await res.json();
 
-      // Map AI category slug to a real category id from the database
+      // Map the detected category slug to a real category id from the database
       const matchedCategory =
         dbCategories.find((c) => c.slug === product.categorySlug) ||
         dbCategories.find(
@@ -566,10 +569,10 @@ export default function NewProductPage() {
           ? Math.round(Number(product.estimatedPriceTzs))
           : 1;
 
-      // Keep the manual form state in sync so the seller can review/edit later
+      // Fill the manual form state so the seller can review/edit every field
       setFormData((prev) => ({
         ...prev,
-        title: product.title || prev.title,
+        title: product.title || productName || prev.title,
         description: product.description || prev.description,
         price: String(price),
         categoryId: categoryId || prev.categoryId,
@@ -589,52 +592,94 @@ export default function NewProductPage() {
         tags: Array.isArray(product.tags) ? product.tags : prev.tags,
       }));
 
-      setSmartStatus("Publishing your listing...");
+      setExtracted(true);
+      toast.success("Details ready — review them before posting.");
+    } catch (error: any) {
+      toast.error(error.message || "Could not read the photo. Please try again.");
+    } finally {
+      setAnalyzing(false);
+      setSmartStatus("");
+    }
+  };
 
-      const response = await fetch("/api/products", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          seller_id: user.id,
-          category_id:
-            categoryId || "12345678-1234-1234-1234-123456789012",
-          title: product.title || productName || "Untitled Product",
-          description: product.description || "No description provided",
-          price,
-          condition: product.condition || "new",
-          region: formData.region || "Dar es Salaam",
-          district: formData.district || "Unknown",
-          ward: formData.ward || "",
-          street: formData.street || "",
-          images,
-          currency: "TZS",
-          quantity: 1,
-          features: Array.isArray(product.tags) ? product.tags : [],
-          attributes: {
-            brand: product.brand || "",
-            model: product.model || "",
-            color: product.color || "",
-            size: product.size || "",
-            material: product.material || "",
-            yearOfManufacture: product.yearOfManufacture || "",
-            countryOfOrigin: product.countryOfOrigin || "",
-          },
-        }),
-      });
+  // Publish the product using the current form state (shared by both the
+  // quick-listing "Post" button and the manual form submit).
+  const submitProduct = async () => {
+    if (!user) {
+      toast.error("You must be logged in to create a product.");
+      return;
+    }
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || "Failed to create product");
-      }
+    // Map frontend conditions to DB ENUM ('new', 'used', 'refurbished')
+    const conditionMap: Record<string, string> = {
+      brand_new: "new",
+      new_open_box: "new",
+      like_new: "used",
+      good: "used",
+      fair: "used",
+      for_parts: "used",
+    };
+    const dbCondition = conditionMap[formData.condition] || "new";
 
+    const response = await fetch("/api/products", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...formData,
+        seller_id: user.id,
+        category_id:
+          formData.categoryId ||
+          dbCategories[0]?.id ||
+          "12345678-1234-1234-1234-123456789012",
+        subcategory_id: formData.subcategoryId || undefined,
+        title: formData.title || productName || "Untitled Product",
+        description: formData.description || "No description provided",
+        price: parseFloat(formData.price) > 0 ? parseFloat(formData.price) : 1,
+        condition: dbCondition,
+        region: formData.region || "Dar es Salaam",
+        district: formData.district || "Unknown",
+        ward: formData.ward || "",
+        street: formData.street || "",
+        images,
+        currency: formData.currency || "TZS",
+        quantity: parseInt(formData.quantity) || 1,
+        features: formData.tags || [],
+        attributes: {
+          brand: formData.brand || "",
+          model: formData.model || "",
+          color: formData.color || "",
+          size: formData.size || "",
+          material: formData.material || "",
+          yearOfManufacture: formData.yearOfManufacture || "",
+          countryOfOrigin: formData.countryOfOrigin || "",
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || "Failed to create product");
+    }
+  };
+
+  // Step 2 — Post directly from the quick-listing review screen.
+  const handlePostExtracted = async () => {
+    setPosting(true);
+    try {
+      await submitProduct();
       toast.success("Product listed successfully!");
       router.push("/seller/products");
     } catch (error: any) {
       toast.error(error.message || "Failed to list product. Please try again.");
     } finally {
-      setAnalyzing(false);
-      setSmartStatus("");
+      setPosting(false);
     }
+  };
+
+  // Open the full manual form pre-filled with the extracted details so the
+  // seller can edit everything before posting.
+  const handleEditExtracted = () => {
+    setSmartMode(false);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -647,59 +692,7 @@ export default function NewProductPage() {
     setIsLoading(true);
 
     try {
-      // Map frontend conditions to DB ENUM ('new', 'used', 'refurbished')
-      const conditionMap: Record<string, string> = {
-        brand_new: "new",
-        new_open_box: "new",
-        like_new: "used",
-        good: "used",
-        fair: "used",
-        for_parts: "used",
-      };
-
-      const dbCondition = conditionMap[formData.condition] || "new";
-
-      const response = await fetch("/api/products", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...formData, // Spread first, so explicitly mapped fields below override these
-          // Map frontend names to backend requirements
-          seller_id: user.id,
-          category_id:
-            formData.categoryId ||
-            dbCategories[0]?.id ||
-            "12345678-1234-1234-1234-123456789012",
-          subcategory_id: formData.subcategoryId || undefined,
-          title: formData.title || "Untitled Product",
-          description: formData.description || "No description provided",
-          price:
-            parseFloat(formData.price) > 0 ? parseFloat(formData.price) : 1,
-          condition: dbCondition,
-          region: formData.region || "Dar es Salaam",
-          district: formData.district || "Unknown",
-          ward: formData.ward || "",
-          street: formData.street || "",
-          images,
-          currency: formData.currency || "TZS",
-          quantity: parseInt(formData.quantity) || 1,
-          features: formData.tags || [],
-          attributes: {
-            brand: formData.brand || "",
-            model: formData.model || "",
-            color: formData.color || "",
-            size: formData.size || "",
-            material: formData.material || "",
-            yearOfManufacture: formData.yearOfManufacture || "",
-          },
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to create product");
-      }
-
+      await submitProduct();
       toast.success("Product listed successfully!");
       router.push("/seller/products");
     } catch (error: any) {
@@ -742,7 +735,7 @@ export default function NewProductPage() {
             className="gap-2"
           >
             <Sparkles className="w-4 h-4" />
-            Smart Upload
+            Quick Upload
           </Button>
         )}
         <Badge variant="outline" className="text-sm">
@@ -757,12 +750,13 @@ export default function NewProductPage() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Sparkles className="w-5 h-5 text-primary" />
-                  Smart Listing
+                  Quick Listing
                 </CardTitle>
                 <CardDescription>
-                  Just upload a photo. Our AI reads the image and fills in the
-                  title, description, price, category and all other details for
-                  you automatically.
+                  Just upload a photo and we&apos;ll fill in the title,
+                  description, price, category and all the other details for you
+                  automatically. You can review and edit everything before
+                  posting.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
