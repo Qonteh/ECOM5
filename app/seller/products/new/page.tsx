@@ -320,6 +320,7 @@ export default function NewProductPage() {
   const [activeTab, setActiveTab] = useState("basic");
   const [dbCategories, setDbCategories] = useState<any[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [hasAutoFilled, setHasAutoFilled] = useState(false);
 
   useEffect(() => {
     async function loadCategories() {
@@ -539,6 +540,7 @@ export default function NewProductPage() {
         metaDescription: data.metaDescription || prev.metaDescription,
       }));
 
+      setHasAutoFilled(true);
       toast.success("Details filled automatically! Review and adjust as needed.", {
         id: toastId,
       });
@@ -590,6 +592,14 @@ export default function NewProductPage() {
     e.preventDefault();
     if (!user) {
       toast.error("You must be logged in to create a product.");
+      return;
+    }
+
+    if (!hasAutoFilled) {
+      toast.error(
+        'Please run "Auto-Fill from Image" first, then review the details before publishing.',
+      );
+      setActiveTab("basic");
       return;
     }
 
@@ -2303,20 +2313,36 @@ export default function NewProductPage() {
         {/* Submit Buttons */}
         <div className="fixed bottom-0 left-0 right-0 bg-background border-t border-border p-4">
           <div className="max-w-5xl mx-auto flex items-center justify-between">
-            <p className="text-sm text-muted-foreground">
-              Listing Fee:{" "}
-              <span className="font-bold">
-                TZS {calculateListingFee().toLocaleString()}
-              </span>{" "}
-              (deducted on sale)
-            </p>
+            <div className="text-sm text-muted-foreground">
+              <p>
+                Listing Fee:{" "}
+                <span className="font-bold">
+                  TZS {calculateListingFee().toLocaleString()}
+                </span>{" "}
+                (deducted on sale)
+              </p>
+              {!hasAutoFilled && (
+                <p className="text-xs text-primary mt-1">
+                  Run &quot;Auto-Fill from Image&quot; to enable publishing.
+                </p>
+              )}
+            </div>
             <div className="flex items-center gap-4">
               <Link href="/seller/products">
                 <Button type="button" variant="outline">
                   Cancel
                 </Button>
               </Link>
-              <Button type="submit" disabled={isLoading} className="min-w-32">
+              <Button
+                type="submit"
+                disabled={isLoading || !hasAutoFilled}
+                title={
+                  !hasAutoFilled
+                    ? "Run Auto-Fill from Image first, then review and publish"
+                    : undefined
+                }
+                className="min-w-32"
+              >
                 {isLoading ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
