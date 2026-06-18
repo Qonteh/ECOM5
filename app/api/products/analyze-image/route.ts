@@ -7,7 +7,7 @@ import { createGroq } from "@ai-sdk/groq";
 import * as z from "zod";
 
 const groq = createGroq({
-  apiKey: process.env.GROQ_API_KEY,
+  apiKey: process.env.GROQ_API_KEY_3,
 });
 
 export const maxDuration = 60;
@@ -58,9 +58,9 @@ export async function POST(req: Request) {
   try {
     const { image, name, categories } = await req.json();
 
-    if (!process.env.GROQ_API_KEY) {
+    if (!process.env.GROQ_API_KEY_3) {
       return Response.json(
-        { error: "GROQ_API_KEY is not set. Add it to your .env.local file." },
+        { error: "GROQ_API_KEY_3 is not set. Add it to your .env.local file." },
         { status: 500 },
       );
     }
