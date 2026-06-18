@@ -18,6 +18,7 @@ import {
   FileText,
   Tag,
   ShieldCheck,
+  Pencil,
 } from "lucide-react";
 import Link from "next/link";
 import {
@@ -323,6 +324,7 @@ export default function NewProductPage() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analyzed, setAnalyzed] = useState(false);
   const [nameHint, setNameHint] = useState("");
+  const [showFullForm, setShowFullForm] = useState(false);
 
   useEffect(() => {
     async function loadCategories() {
@@ -847,18 +849,36 @@ export default function NewProductPage() {
                     ))}
                   </div>
                 )}
+                <div className="pt-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowFullForm((v) => !v)}
+                    className="gap-2"
+                  >
+                    <Pencil className="w-4 h-4" />
+                    {showFullForm ? "Hide details" : "Edit details"}
+                  </Button>
+                  {!showFullForm && (
+                    <p className="text-xs text-muted-foreground mt-2">
+                      Everything looks right? Just publish. Want to change
+                      something? Tap Edit details.
+                    </p>
+                  )}
+                </div>
               </CardContent>
             </Card>
           )}
         </div>
 
-        {/* Full listing form kept available but visually hidden — all fields
-            are filled automatically by the Smart Upload above. */}
+        {/* Full listing form — hidden by default (auto-filled by Smart Upload),
+            revealed for editing when the seller taps "Edit details". */}
         <Tabs
           value={activeTab}
           onValueChange={setActiveTab}
-          className="space-y-6 hidden"
-          aria-hidden="true"
+          className={showFullForm ? "space-y-6" : "space-y-6 hidden"}
+          aria-hidden={!showFullForm}
         >
           <TabsList className="grid grid-cols-2 lg:grid-cols-6 w-full">
             <TabsTrigger value="basic" className="gap-2">
